@@ -56,31 +56,57 @@ run_privileged() {
     fi
 }
 
+# Function to detect package manager
+detect_package_manager() {
+    if command_exists apt-get; then
+        echo "apt"
+    elif command_exists dnf; then
+        echo "dnf"
+    elif command_exists yum; then
+        echo "yum"
+    elif command_exists pacman; then
+        echo "pacman"
+    elif command_exists apk; then
+        echo "apk"
+    elif command_exists brew; then
+        echo "brew"
+    else
+        echo "unknown"
+    fi
+}
+
 # Function to install package based on OS
 install_package() {
     local pkg=$1
-    print_status "Installing $pkg..."
+    local pkg_manager=$(detect_package_manager)
     
-    if command_exists apt-get; then
-        # Debian/Ubuntu
-        run_privileged apt-get update
-        run_privileged apt-get install -y "$pkg"
-    elif command_exists dnf; then
-        # Fedora
-        run_privileged dnf install -y "$pkg"
-    elif command_exists yum; then
-        # CentOS/RHEL
-        run_privileged yum install -y "$pkg"
-    elif command_exists pacman; then
-        # Arch Linux
-        run_privileged pacman -S --noconfirm "$pkg"
-    elif command_exists brew; then
-        # macOS
-        brew install "$pkg"
-    else
-        print_error "Package manager not found. Please install $pkg manually."
-        return 1
-    fi
+    print_status "Installing $pkg using $pkg_manager..."
+    
+    case $pkg_manager in
+        "apt")
+            run_privileged apt-get update
+            run_privileged apt-get install -y "$pkg"
+            ;;
+        "dnf")
+            run_privileged dnf install -y "$pkg"
+            ;;
+        "yum")
+            run_privileged yum install -y "$pkg"
+            ;;
+        "pacman")
+            run_privileged pacman -S --noconfirm "$pkg"
+            ;;
+        "apk")
+            run_privileged apk add --no-cache "$pkg"
+            ;;
+        "brew")
+            brew install "$pkg"
+            ;;
+        *)
+            print_error "Package manager not found. Please install $pkg manually."
+            return 1
+            ;;
+    esac
 }
 
 # Function to backup existing dotfiles
@@ -112,7 +138,7 @@ clone_dotfiles() {
     fi
 }
 
-# Function to install Neovim
+# Function to install Neovim (universal method)
 install_neovim() {
     if command_exists nvim; then
         print_status "Neovim is already installed"
@@ -121,21 +147,36 @@ install_neovim() {
 
     print_status "Installing Neovim..."
     
-    if command_exists apt-get; then
-        run_privileged add-apt-repository ppa:neovim-ppa/stable -y
-        run_privileged apt-get update
-        run_privileged apt-get install -y neovim
-    elif command_exists brew; then
-        brew install neovim
-    else
-        # Install from source or use other package managers
-        install_package neovim || {
-            print_warning "Falling back to manual Neovim installation..."
-            curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim.appimage
-            chmod u+x nvim.appimage
-            run_privileged mv nvim.appimage /usr/local/bin/nvim
-        }
+    # Try package manager first
+    if install_package neovim; then
+        return 0
     fi
+    
+    # Fallback: manual installation
+    print_warning "Falling back to manual Neovim installation..."
+    
+    local temp_dir=$(mktemp -d)
+    cd "$temp_dir"
+    
+    # Download appropriate version based on architecture
+    if [ "$(uname -m)" = "x86_64" ]; then
+        curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim-linux64.tar.gz
+        tar xzf nvim-linux64.tar.gz
+        run_privileged cp -r nvim-linux64/* /usr/local/
+    elif [ "$(uname -m)" = "aarch64" ]; then
+        curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim-linux-arm64.tar.gz
+        tar xzf nvim-linux-arm64.tar.gz
+        run_privileged cp -r nvim-linux-arm64/* /usr/local/
+    else
+        # Build from source as last resort
+        print_warning "Building Neovim from source..."
+        run_privileged apt-get install -y ninja-build gettext cmake unzip curl
+        git clone https://github.com/neovim/neovim
+        cd neovim && make CMAKE_BUILD_TYPE=RelWithDebInfo
+        run_privileged make install
+    fi
+    
+    cd && rm -rf "$temp_dir"
 }
 
 # Function to install Tmux
@@ -148,7 +189,7 @@ install_tmux() {
     install_package tmux
 }
 
-# Function to install Zsh and Oh-My-Zsh
+# Function to install Zsh
 install_zsh() {
     if command_exists zsh; then
         print_status "Zsh is already installed"
@@ -156,16 +197,16 @@ install_zsh() {
         install_package zsh
     fi
 
-    # Install Oh-My-Zsh if not present
-    if [[ ! -d "$HOME/.oh-my-zsh" ]]; then
+    # Install Oh-My-Zsh if not present (only for non-root users)
+    if [[ ! -d "$HOME/.oh-my-zsh" ]] && [ "$IS_ROOT" = false ]; then
         print_status "Installing Oh-My-Zsh..."
         sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
     fi
 
     # Set Zsh as default shell (only if not root for safety)
-    if [ "$IS_ROOT" = false ] && [ "$SHELL" != "$(which zsh)" ]; then
+    if [ "$IS_ROOT" = false ] && [ "$SHELL" != "$(command -v zsh)" ]; then
         print_status "Setting Zsh as default shell..."
-        chsh -s "$(which zsh)"
+        chsh -s "$(command -v zsh)"
     elif [ "$IS_ROOT" = true ]; then
         print_warning "Running as root: Skipping default shell change for safety"
     fi
@@ -206,55 +247,23 @@ setup_symlinks() {
     done
 }
 
-# Function to install Neovim plugins
-install_neovim_plugins() {
-    print_status "Installing Neovim plugins..."
-    
-    if command_exists nvim; then
-        nvim --headless -c 'autocmd User PackerComplete quitall' -c 'PackerSync' 2>/dev/null || true
-        nvim --headless -c 'autocmd User PackerComplete quitall' -c 'PackerInstall' 2>/dev/null || true
-    fi
-}
-
-# Function to set up Tmux plugins
-setup_tmux_plugins() {
-    print_status "Setting up Tmux plugins..."
-    
-    if [[ -d "$HOME/.tmux/plugins/tpm" ]]; then
-        # Install Tmux plugins
-        bash "$HOME/.tmux/plugins/tpm/scripts/install_plugins.sh" 2>/dev/null || true
-    fi
-}
-
-# Function to handle user-specific setup
-user_setup_warning() {
-    if [ "$IS_ROOT" = true ]; then
-        print_warning "=========================================================="
-        print_warning "RUNNING AS ROOT USER - BE CAREFUL!"
-        print_warning "=========================================================="
-        print_warning "Some operations (like changing default shell) are disabled"
-        print_warning "for safety when running as root."
-        print_warning "Consider running this script as a regular user."
-        print_warning "=========================================================="
-        sleep 2
-    fi
-}
-
 # Main execution
 main() {
-    user_setup_warning
-    
     print_status "Starting environment setup..."
     print_status "Running as: $(whoami)"
-    print_status "User ID: $(id -u)"
+    print_status "Detected package manager: $(detect_package_manager)"
     
     # Update package lists
-    if command_exists apt-get; then
-        run_privileged apt-get update
-    fi
+    case $(detect_package_manager) in
+        "apt") run_privileged apt-get update ;;
+        "dnf") run_privileged dnf check-update ;;
+        "yum") run_privileged yum check-update ;;
+        "pacman") run_privileged pacman -Sy ;;
+        "apk") run_privileged apk update ;;
+    esac
     
     # Install essential build tools
-    install_package build-essential
+    install_package build-essential 2>/dev/null || install_package build-base 2>/dev/null || true
     
     # Backup existing dotfiles
     backup_dotfiles
@@ -271,22 +280,16 @@ main() {
     # Set up symlinks
     setup_symlinks
     
-    # Install plugins
-    install_neovim_plugins
-    setup_tmux_plugins
-    
     print_success "Environment setup completed successfully!"
     print_success "Backup of old dotfiles created at: $BACKUP_DIR"
     
     if [ "$IS_ROOT" = false ]; then
         print_success "Please restart your terminal or run: exec zsh"
-    else
-        print_warning "Running as root: Some user-specific settings may not be applied"
     fi
     
     # Show installed versions
     echo -e "\n${GREEN}Installed versions:${NC}"
-    command_exists nvim && echo "Neovim: $(nvim --version | head -n1)"
+    command_exists nvim && echo "Neovim: $(nvim --version | head -n1 | cut -d' ' -f2-)"
     command_exists tmux && echo "Tmux: $(tmux -V)"
     command_exists zsh && echo "Zsh: $(zsh --version)"
 }
