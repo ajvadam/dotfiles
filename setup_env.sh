@@ -16,6 +16,15 @@ DOTFILES_REPO="https://github.com/ajvadam/dotfiles.git"
 DOTFILES_DIR="$HOME/dotfiles"
 BACKUP_DIR="$HOME/dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
 
+# Check if running as root
+if [ "$(id -u)" -eq 0 ]; then
+    IS_ROOT=true
+    SUDO_CMD=""  # Root doesn't need sudo
+else
+    IS_ROOT=false
+    SUDO_CMD="sudo"  # Non-root needs sudo for system commands
+fi
+
 # Function to print colored output
 print_status() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -38,6 +47,15 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to run commands with appropriate privileges
+run_privileged() {
+    if [ "$IS_ROOT" = true ]; then
+        "$@"
+    else
+        $SUDO_CMD "$@"
+    fi
+}
+
 # Function to install package based on OS
 install_package() {
     local pkg=$1
@@ -45,17 +63,17 @@ install_package() {
     
     if command_exists apt-get; then
         # Debian/Ubuntu
-        sudo apt-get update
-        sudo apt-get install -y "$pkg"
+        run_privileged apt-get update
+        run_privileged apt-get install -y "$pkg"
     elif command_exists dnf; then
         # Fedora
-        sudo dnf install -y "$pkg"
+        run_privileged dnf install -y "$pkg"
     elif command_exists yum; then
         # CentOS/RHEL
-        sudo yum install -y "$pkg"
+        run_privileged yum install -y "$pkg"
     elif command_exists pacman; then
         # Arch Linux
-        sudo pacman -S --noconfirm "$pkg"
+        run_privileged pacman -S --noconfirm "$pkg"
     elif command_exists brew; then
         # macOS
         brew install "$pkg"
@@ -104,9 +122,9 @@ install_neovim() {
     print_status "Installing Neovim..."
     
     if command_exists apt-get; then
-        sudo add-apt-repository ppa:neovim-ppa/stable -y
-        sudo apt-get update
-        sudo apt-get install -y neovim
+        run_privileged add-apt-repository ppa:neovim-ppa/stable -y
+        run_privileged apt-get update
+        run_privileged apt-get install -y neovim
     elif command_exists brew; then
         brew install neovim
     else
@@ -115,7 +133,7 @@ install_neovim() {
             print_warning "Falling back to manual Neovim installation..."
             curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim.appimage
             chmod u+x nvim.appimage
-            sudo mv nvim.appimage /usr/local/bin/nvim
+            run_privileged mv nvim.appimage /usr/local/bin/nvim
         }
     fi
 }
@@ -144,10 +162,12 @@ install_zsh() {
         sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
     fi
 
-    # Set Zsh as default shell
-    if [[ "$SHELL" != "$(which zsh)" ]]; then
+    # Set Zsh as default shell (only if not root for safety)
+    if [ "$IS_ROOT" = false ] && [ "$SHELL" != "$(which zsh)" ]; then
         print_status "Setting Zsh as default shell..."
         chsh -s "$(which zsh)"
+    elif [ "$IS_ROOT" = true ]; then
+        print_warning "Running as root: Skipping default shell change for safety"
     fi
 }
 
@@ -206,13 +226,31 @@ setup_tmux_plugins() {
     fi
 }
 
+# Function to handle user-specific setup
+user_setup_warning() {
+    if [ "$IS_ROOT" = true ]; then
+        print_warning "=========================================================="
+        print_warning "RUNNING AS ROOT USER - BE CAREFUL!"
+        print_warning "=========================================================="
+        print_warning "Some operations (like changing default shell) are disabled"
+        print_warning "for safety when running as root."
+        print_warning "Consider running this script as a regular user."
+        print_warning "=========================================================="
+        sleep 2
+    fi
+}
+
 # Main execution
 main() {
+    user_setup_warning
+    
     print_status "Starting environment setup..."
+    print_status "Running as: $(whoami)"
+    print_status "User ID: $(id -u)"
     
     # Update package lists
     if command_exists apt-get; then
-        sudo apt-get update
+        run_privileged apt-get update
     fi
     
     # Install essential build tools
@@ -239,7 +277,12 @@ main() {
     
     print_success "Environment setup completed successfully!"
     print_success "Backup of old dotfiles created at: $BACKUP_DIR"
-    print_success "Please restart your terminal or run: exec zsh"
+    
+    if [ "$IS_ROOT" = false ]; then
+        print_success "Please restart your terminal or run: exec zsh"
+    else
+        print_warning "Running as root: Some user-specific settings may not be applied"
+    fi
     
     # Show installed versions
     echo -e "\n${GREEN}Installed versions:${NC}"
