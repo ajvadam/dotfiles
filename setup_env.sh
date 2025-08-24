@@ -212,19 +212,29 @@ install_zsh() {
     fi
 }
 
-# Function to set up symlinks
-setup_symlinks() {
-    print_status "Setting up symlinks..."
+# Function to copy nvim folder to ~/.config
+setup_nvim_config() {
+    print_status "Setting up Neovim configuration..."
     
     # Create config directory if it doesn't exist
     mkdir -p "$HOME/.config"
     
-    # Symlink Neovim config
+    # Copy the entire nvim folder to ~/.config
     if [[ -d "$DOTFILES_DIR/nvim" ]]; then
-        ln -sfn "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
+        print_status "Copying nvim folder to ~/.config/"
+        cp -r "$DOTFILES_DIR/nvim" "$HOME/.config/"
+        print_success "Neovim configuration copied successfully"
+    else
+        print_error "nvim folder not found in dotfiles repository"
+        return 1
     fi
+}
+
+# Function to set up symlinks for other dotfiles
+setup_symlinks() {
+    print_status "Setting up symlinks for other dotfiles..."
     
-    # Symlink other dotfiles
+    # Symlink other dotfiles (excluding nvim since we copied it)
     local dotfiles=(
         ".zshrc" ".tmux.conf" ".bashrc" ".bash_profile" ".profile"
     )
@@ -232,6 +242,7 @@ setup_symlinks() {
     for dotfile in "${dotfiles[@]}"; do
         if [[ -f "$DOTFILES_DIR/$dotfile" ]]; then
             ln -sfn "$DOTFILES_DIR/$dotfile" "$HOME/$dotfile"
+            print_status "Linked $dotfile"
         fi
     done
 }
@@ -262,7 +273,10 @@ main() {
     install_tmux
     install_zsh
     
-    # Set up symlinks
+    # Copy nvim folder to ~/.config (instead of symlinking)
+    setup_nvim_config
+    
+    # Set up symlinks for other dotfiles
     setup_symlinks
     
     print_success "Environment setup completed successfully!"
