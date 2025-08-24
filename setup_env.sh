@@ -138,6 +138,35 @@ clone_dotfiles() {
     fi
 }
 
+# Function to install required tools from YOUR configuration
+install_required_tools() {
+    print_status "Checking for required tools..."
+    
+    # Start with absolute minimum required tools
+    local required_tools=("git")
+    
+    # Check if you have a tools configuration file in your dotfiles
+    if [[ -f "$DOTFILES_DIR/required_tools.txt" ]]; then
+        print_status "Reading tools from your required_tools.txt..."
+        while IFS= read -r tool; do
+            # Skip comments and empty lines
+            [[ "$tool" =~ ^# ]] || [[ -z "$tool" ]] && continue
+            required_tools+=("$tool")
+        done < "$DOTFILES_DIR/required_tools.txt"
+    else
+        print_warning "No required_tools.txt found in your dotfiles. Installing minimum required tools only."
+    fi
+    
+    for tool in "${required_tools[@]}"; do
+        if ! command_exists "$tool"; then
+            print_status "Installing $tool..."
+            install_package "$tool"
+        else
+            print_status "$tool is already installed"
+        fi
+    done
+}
+
 # Function to install Neovim (universal method)
 install_neovim() {
     if command_exists nvim; then
@@ -212,17 +241,6 @@ install_zsh() {
     fi
 }
 
-# Function to install additional tools
-install_additional_tools() {
-    local tools=("git" "curl" "wget" "fzf" "ripgrep" "fd-find" "bat" "exa")
-    
-    for tool in "${tools[@]}"; do
-        if ! command_exists "$tool"; then
-            install_package "$tool"
-        fi
-    done
-}
-
 # Function to set up symlinks
 setup_symlinks() {
     print_status "Setting up symlinks..."
@@ -271,11 +289,11 @@ main() {
     # Clone dotfiles
     clone_dotfiles
     
-    # Install required programs
+    # Install required programs (only what's needed)
+    install_required_tools
     install_neovim
     install_tmux
     install_zsh
-    install_additional_tools
     
     # Set up symlinks
     setup_symlinks
@@ -292,6 +310,7 @@ main() {
     command_exists nvim && echo "Neovim: $(nvim --version | head -n1 | cut -d' ' -f2-)"
     command_exists tmux && echo "Tmux: $(tmux -V)"
     command_exists zsh && echo "Zsh: $(zsh --version)"
+    command_exists git && echo "Git: $(git --version | cut -d' ' -f3-)"
 }
 
 # Run main function
